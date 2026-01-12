@@ -8,8 +8,13 @@ A TUI toolkit that gives Claude Code its own display. Spawn interactive terminal
 
 ## Requirements
 
+### macOS / Linux
 - [Bun](https://bun.sh) — used to run skill tools
 - [tmux](https://github.com/tmux/tmux) — canvases spawn in split panes
+
+### Windows
+- [Bun](https://bun.sh) — used to run skill tools
+- [Windows Terminal](https://aka.ms/terminal) — canvases spawn in split panes (recommended)
 
 ## Installation
 
@@ -24,6 +29,47 @@ Then install the canvas plugin:
 ```
 /plugin install canvas@claude-canvas
 ```
+
+## Windows Setup
+
+Windows support uses Windows Terminal for split panes instead of tmux.
+
+### Install Bun
+
+```powershell
+powershell -c "irm bun.sh/install.ps1 | iex"
+```
+
+### Install Windows Terminal
+
+Windows Terminal is pre-installed on Windows 11. For Windows 10, install from the [Microsoft Store](https://aka.ms/terminal) or via winget:
+
+```powershell
+winget install Microsoft.WindowsTerminal
+```
+
+### Running Claude Code in Windows Terminal
+
+For the best experience, run Claude Code from within Windows Terminal. The canvas will automatically detect Windows Terminal and spawn split panes.
+
+If you run Claude Code from a different terminal (cmd.exe, PowerShell outside WT), canvases will open in a new Windows Terminal tab instead.
+
+### Manual Testing
+
+You can test the canvas directly:
+
+```powershell
+cd canvas
+bun run src/cli.ts env                    # Check terminal detection
+bun run src/cli.ts spawn calendar         # Spawn calendar canvas
+bun run src/cli.ts spawn calendar --config-file test-calendar.json
+```
+
+### How It Works on Windows
+
+- **IPC**: Uses TCP sockets (localhost) instead of Unix domain sockets
+- **Spawning**: Uses `wt.exe` CLI to create split panes or new tabs
+- **Launcher Scripts**: Creates temporary `.cmd` files in `%TEMP%` to avoid shell escaping issues
 
 ## License
 
