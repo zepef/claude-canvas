@@ -5,10 +5,76 @@
  * canvas assignments, and providing APIs for window operations.
  */
 
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import * as vd from "./virtual-desktop";
 import { getTempFilePath, getSocketPath, isWindows } from "./ipc/types";
+
+/**
+ * Find Windows Terminal executable
+ */
+function findWtExe(): string {
+  // Common locations
+  const localAppData = process.env.LOCALAPPDATA || "";
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+
+  const possiblePaths = [
+    // Microsoft Store version (most common)
+    join(localAppData, "Microsoft", "WindowsApps", "wt.exe"),
+    // Scoop
+    join(process.env.USERPROFILE || "", "scoop", "apps", "windows-terminal", "current", "wt.exe"),
+    // Chocolatey
+    join(programFiles, "WindowsTerminal", "wt.exe"),
+  ];
+
+  for (const p of possiblePaths) {
+    if (existsSync(p)) {
+      return p;
+    }
+  }
+
+  // Fall back to hoping it's in PATH
+  return "wt.exe";
+}
+
+/**
+ * Spawn a Windows Terminal window using PowerShell Start-Process
+ * This is more reliable than direct spawn on Windows
+ */
+async function spawnWtWindow(title: string, scriptPath: string): Promise<void> {
+  const wtExe = findWtExe();
+  const escapedWt = wtExe.replace(/\\/g, "\\\\");
+  const escapedScript = scriptPath.replace(/\\/g, "\\\\");
+
+  // Build PowerShell command without backticks in JS template
+  // Use single quotes for the inner strings in PowerShell
+  const psLines = [
+    '$wtPath = "' + escapedWt + '"',
+    '$title = "' + title + '"',
+    '$script = "' + escapedScript + '"',
+    'Start-Process -FilePath $wtPath -ArgumentList @("new-window", "--title", $title, "cmd", "/k", $script) -WindowStyle Normal'
+  ];
+  const psScript = psLines.join("; ");
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("powershell", [
+      "-NoProfile",
+      "-ExecutionPolicy", "Bypass",
+      "-Command", psScript
+    ], {
+      detached: true,
+      stdio: "ignore",
+    });
+
+    proc.on("error", (err) => {
+      reject(new Error("Failed to spawn window: " + err.message));
+    });
+
+    proc.unref();
+    setTimeout(() => resolve(), 500);
+  });
+}
 
 export interface CanvasWindow {
   id: string;                  // Unique window ID (e.g., "win-1")
@@ -111,28 +177,14 @@ echo.
 timeout /t 3600 /nobreak >nul
 goto loop
 `;
-    Bun.write(waitScript, scriptContent).then(() => {
-      // Spawn a new Windows Terminal window
-      const proc = spawn("wt.exe", [
-        "new-window",
-        "--title", title,
-        waitScript
-      ], {
-        detached: true,
-        stdio: "ignore",
-        shell: false,
-      });
-
-      proc.on("error", (err) => {
-        reject(new Error(`Failed to spawn window: ${err.message}`));
-      });
-
-      proc.unref();
-
-      // Wait for window to appear and get handle
-      setTimeout(async () => {
+    Bun.write(waitScript, scriptContent).then(async () => {
+      try {
+        // Spawn a new Windows Terminal window using PowerShell
+        await spawnWtWindow(title, waitScript);
         resolve({ title });
-      }, 500);
+      } catch (err) {
+        reject(err);
+      }
     });
   });
 }
@@ -194,44 +246,23 @@ export async function spawnCanvasWindow(
   }
   await Bun.write(scriptPath, command);
 
-  return new Promise((resolve, reject) => {
-    // Spawn new window
-    const proc = spawn("wt.exe", [
-      "new-window",
-      "--title", title,
-      scriptPath
-    ], {
-      detached: true,
-      stdio: "ignore",
-      shell: false,
-    });
+  // Spawn using PowerShell helper
+  await spawnWtWindow(title, scriptPath);
 
-    proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn canvas window: ${err.message}`));
-    });
+  // Wait for window and get handle
+  const handle = await waitForWindowHandle(title);
+  if (!handle) {
+    throw new Error(`Could not find window handle for ${title}`);
+  }
 
-    proc.unref();
-
-    // Wait for window and get handle
-    setTimeout(async () => {
-      const handle = await waitForWindowHandle(title);
-      if (!handle) {
-        reject(new Error(`Could not find window handle for ${title}`));
-        return;
-      }
-
-      const window: CanvasWindow = {
-        id: windowId,
-        canvasId,
-        canvasKind,
-        windowHandle: handle,
-        title,
-        desktopIndex: -1, // Will be set when moved to canvas desktop
-      };
-
-      resolve(window);
-    }, 500);
-  });
+  return {
+    id: windowId,
+    canvasId,
+    canvasKind,
+    windowHandle: handle,
+    title,
+    desktopIndex: -1, // Will be set when moved to canvas desktop
+  };
 }
 
 /**
@@ -304,21 +335,8 @@ public class Win32 {
   await vd.closeWindow(window.windowHandle);
   await new Promise(r => setTimeout(r, 300));
 
-  // Spawn new window
-  const proc = spawn("wt.exe", [
-    "new-window",
-    "--title", title,
-    scriptPath
-  ], {
-    detached: true,
-    stdio: "ignore",
-    shell: false,
-  });
-
-  proc.unref();
-
-  // Wait for new window
-  await new Promise(r => setTimeout(r, 500));
+  // Spawn new window using PowerShell helper
+  await spawnWtWindow(title, scriptPath);
   const newHandle = await waitForWindowHandle(title);
 
   if (!newHandle) {

@@ -26,10 +26,18 @@ export interface WindowInfo {
 async function runPowerShell(script: string): Promise<string> {
   return new Promise((resolve, reject) => {
     // Import the VirtualDesktop module and run the command
+    // Add OneDrive module path for cases where modules are synced there
     const fullScript = `
       $ErrorActionPreference = 'Stop'
+
+      # Add OneDrive module path if it exists (common on synced Windows setups)
+      $oneDriveModules = "$env:USERPROFILE\\OneDrive\\Documents\\WindowsPowerShell\\Modules"
+      if (Test-Path $oneDriveModules) {
+        $env:PSModulePath = "$oneDriveModules;" + $env:PSModulePath
+      }
+
       try {
-        Import-Module VirtualDesktop -ErrorAction Stop
+        Import-Module VirtualDesktop -ErrorAction Stop -WarningAction SilentlyContinue
         ${script}
       } catch {
         Write-Error $_.Exception.Message
@@ -131,11 +139,17 @@ export async function getDesktopName(index: number): Promise<string> {
 export async function createDesktop(name?: string): Promise<number> {
   const result = await runPowerShell(`
     $desktop = New-Desktop
-    $index = Get-DesktopIndex -Desktop $desktop
     ${name ? `Set-DesktopName -Desktop $desktop -Name "${name}"` : ""}
+    # Get all desktops and find the index of the new one
+    $count = Get-DesktopCount
+    $index = $count - 1
     Write-Output $index
   `);
-  return parseInt(result, 10);
+  const index = parseInt(result.trim(), 10);
+  if (isNaN(index)) {
+    throw new Error(`Failed to parse desktop index from: "${result}"`);
+  }
+  return index;
 }
 
 /**
