@@ -361,6 +361,79 @@ async function spawnNewTerminalWindow(
 }
 
 // ============================================
+// New Window Spawning (for Session Manager)
+// ============================================
+
+export interface NewWindowOptions {
+  title?: string;
+  configFile?: string;
+  socketPath?: string;
+  scenario?: string;
+}
+
+/**
+ * Spawn a canvas in a new Windows Terminal window (not a pane)
+ * This is used by the session manager to create independent windows
+ */
+export async function spawnCanvasNewWindow(
+  kind: string,
+  id: string,
+  options: NewWindowOptions = {}
+): Promise<SpawnResult> {
+  if (!isWindows) {
+    throw new Error("spawnCanvasNewWindow is only supported on Windows");
+  }
+
+  const srcDir = import.meta.dir;
+  const scriptDir = srcDir.endsWith("src")
+    ? srcDir.slice(0, -3)
+    : srcDir.replace(/[\\\/]src$/, "");
+
+  const bunPath = process.execPath;
+  const cliPath = join(scriptDir, "src", "cli.ts").replace(/\//g, "\\");
+  const socketPath = options.socketPath || getSocketPath(id);
+
+  // Build command arguments
+  const cmdArgs = ["show", kind, "--id", id, "--socket", socketPath];
+  if (options.scenario) {
+    cmdArgs.push("--scenario", options.scenario);
+  }
+
+  // Create launcher script
+  const scriptPath = getTempFilePath(`canvas-launch-${id}.cmd`);
+  const title = options.title || `Canvas: ${id}`;
+
+  let command = `@echo off\ntitle ${title}\n"${bunPath}" "${cliPath}" ${cmdArgs.join(" ")}`;
+  if (options.configFile) {
+    command += ` --config-file "${options.configFile}"`;
+  }
+
+  await Bun.write(scriptPath, command);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn("wt.exe", [
+      "new-window",
+      "--title", title,
+      scriptPath
+    ], {
+      detached: true,
+      stdio: "ignore",
+      shell: false,
+    });
+
+    proc.on("error", (err) => {
+      reject(new Error(`Failed to spawn new window: ${err.message}`));
+    });
+
+    proc.unref();
+
+    setTimeout(() => {
+      resolve({ method: "windows-terminal-window" });
+    }, 100);
+  });
+}
+
+// ============================================
 // Cross-platform utility functions
 // ============================================
 

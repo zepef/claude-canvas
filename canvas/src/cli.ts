@@ -3,6 +3,8 @@ import { program } from "commander";
 import { detectTerminal, spawnCanvas, getTerminalInfo } from "./terminal";
 import { isWindows, getSocketPath, getPortFilePath } from "./ipc/types";
 import { existsSync } from "node:fs";
+import * as session from "./session";
+import type { CanvasWindow } from "./window-manager";
 
 // Set window title via ANSI escape codes
 function setWindowTitle(title: string) {
@@ -296,5 +298,307 @@ async function sendAndReceive(id: string, socketPath: string, message: unknown):
     }
   });
 }
+
+// ============================================
+// Session Management Commands
+// ============================================
+
+const sessionCmd = program
+  .command("session")
+  .description("Manage canvas virtual desktop sessions");
+
+sessionCmd
+  .command("start")
+  .description("Start a new canvas session with dedicated virtual desktop")
+  .option("-n, --name <name>", "Desktop name", "Canvas Session")
+  .option("-w, --windows <count>", "Number of windows to create", "2")
+  .action(async (options) => {
+    try {
+      // Check dependencies first
+      const deps = await session.checkDependencies();
+      if (!deps.ready) {
+        console.error(`Error: ${deps.error}`);
+        if (!deps.moduleInstalled) {
+          console.log("\nTo install the VirtualDesktop module:");
+          console.log("  Install-Module VirtualDesktop -Scope CurrentUser");
+        }
+        process.exit(1);
+      }
+
+      console.log("Starting canvas session...");
+      const state = await session.startSession({
+        name: options.name,
+        windowCount: parseInt(options.windows, 10),
+      });
+
+      console.log(`\nSession started successfully!`);
+      console.log(`  Desktop: ${state.desktopName} (index ${state.desktopIndex})`);
+      console.log(`  Windows: ${state.windows.length}`);
+      console.log(`\nWindow IDs:`);
+      for (const win of state.windows) {
+        console.log(`  - ${win.id}`);
+      }
+      console.log(`\nUse 'canvas session status' to view session info`);
+      console.log(`Use 'canvas assign <window-id> <canvas-kind>' to assign canvases`);
+    } catch (err) {
+      console.error(`Failed to start session: ${err}`);
+      process.exit(1);
+    }
+  });
+
+sessionCmd
+  .command("stop")
+  .description("Stop the current canvas session")
+  .option("--keep-desktop", "Keep the virtual desktop after stopping")
+  .action(async (options) => {
+    try {
+      await session.stopSession({
+        removeDesktop: !options.keepDesktop,
+      });
+    } catch (err) {
+      console.error(`Failed to stop session: ${err}`);
+      process.exit(1);
+    }
+  });
+
+sessionCmd
+  .command("status")
+  .description("Show current session status")
+  .action(async () => {
+    try {
+      const info = await session.getSessionInfo();
+
+      if (!info.isRunning) {
+        console.log("No active canvas session");
+        console.log("\nStart one with: canvas session start");
+        return;
+      }
+
+      console.log("Canvas Session Status");
+      console.log("=====================");
+      console.log(`  Desktop: ${info.desktopName} (index ${info.desktopIndex})`);
+      console.log(`  Main desktop: ${info.mainDesktopIndex}`);
+      console.log(`  Windows: ${info.windowCount}`);
+      console.log(`  Active canvases: ${info.activeCanvases}`);
+      console.log(`  Created: ${info.createdAt}`);
+
+      // List windows
+      const windows = await session.listWindows();
+      if (windows.length > 0) {
+        console.log("\nWindows:");
+        for (const win of windows) {
+          const canvas = win.canvasKind ? `${win.canvasKind} (${win.canvasId})` : "(empty)";
+          console.log(`  ${win.id}: ${canvas}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to get session status: ${err}`);
+      process.exit(1);
+    }
+  });
+
+sessionCmd
+  .command("reconnect")
+  .description("Reconnect to an existing session after restart")
+  .action(async () => {
+    try {
+      const state = await session.reconnectSession();
+      if (!state) {
+        console.log("No session to reconnect to");
+        return;
+      }
+
+      console.log("Reconnected to session:");
+      console.log(`  Desktop: ${state.desktopName}`);
+      console.log(`  Windows: ${state.windows.length}`);
+    } catch (err) {
+      console.error(`Failed to reconnect: ${err}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================
+// Window Management Commands
+// ============================================
+
+const windowCmd = program
+  .command("window")
+  .description("Manage canvas windows");
+
+windowCmd
+  .command("list")
+  .description("List all windows in the current session")
+  .action(async () => {
+    try {
+      const windows = await session.listWindows();
+
+      if (windows.length === 0) {
+        console.log("No windows in session");
+        return;
+      }
+
+      console.log("Windows:");
+      for (const win of windows) {
+        const canvas = win.canvasKind ? `${win.canvasKind}` : "(empty)";
+        console.log(`  ${win.id}: ${canvas}`);
+        console.log(`    Handle: ${win.windowHandle}`);
+        if (win.canvasId) {
+          console.log(`    Canvas ID: ${win.canvasId}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to list windows: ${err}`);
+      process.exit(1);
+    }
+  });
+
+windowCmd
+  .command("add [kind]")
+  .description("Add a new window to the session")
+  .option("--config <json>", "Canvas configuration (JSON)")
+  .option("--config-file <path>", "Path to config file (JSON)")
+  .action(async (kind, options) => {
+    try {
+      let config: unknown;
+      if (options.configFile) {
+        const file = Bun.file(options.configFile);
+        config = JSON.parse(await file.text());
+      } else if (options.config) {
+        config = JSON.parse(options.config);
+      }
+
+      const window = await session.addWindow(kind, config);
+      console.log(`Added window: ${window.id}`);
+      if (window.canvasKind) {
+        console.log(`  Canvas: ${window.canvasKind}`);
+      }
+    } catch (err) {
+      console.error(`Failed to add window: ${err}`);
+      process.exit(1);
+    }
+  });
+
+windowCmd
+  .command("close <window-id>")
+  .description("Close a window")
+  .action(async (windowId) => {
+    try {
+      await session.closeWindow(windowId);
+      console.log(`Closed window: ${windowId}`);
+    } catch (err) {
+      console.error(`Failed to close window: ${err}`);
+      process.exit(1);
+    }
+  });
+
+windowCmd
+  .command("focus <window-id>")
+  .description("Focus a specific window")
+  .action(async (windowId) => {
+    try {
+      await session.focusWindow(windowId);
+      console.log(`Focused window: ${windowId}`);
+    } catch (err) {
+      console.error(`Failed to focus window: ${err}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================
+// Canvas Assignment Commands
+// ============================================
+
+program
+  .command("assign <window-id> <canvas-kind>")
+  .description("Assign a canvas to a window")
+  .option("--config <json>", "Canvas configuration (JSON)")
+  .option("--config-file <path>", "Path to config file (JSON)")
+  .action(async (windowId, canvasKind, options) => {
+    try {
+      let config: unknown;
+      if (options.configFile) {
+        const file = Bun.file(options.configFile);
+        config = JSON.parse(await file.text());
+      } else if (options.config) {
+        config = JSON.parse(options.config);
+      }
+
+      const window = await session.assignCanvas(windowId, canvasKind, config);
+      console.log(`Assigned ${canvasKind} canvas to window ${windowId}`);
+      console.log(`  Canvas ID: ${window.canvasId}`);
+    } catch (err) {
+      console.error(`Failed to assign canvas: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("swap <window-id-1> <window-id-2>")
+  .description("Swap canvases between two windows")
+  .action(async (windowId1, windowId2) => {
+    try {
+      await session.swapCanvases(windowId1, windowId2);
+      console.log(`Swapped canvases between ${windowId1} and ${windowId2}`);
+    } catch (err) {
+      console.error(`Failed to swap canvases: ${err}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================
+// Desktop Navigation Commands
+// ============================================
+
+program
+  .command("focus-desktop")
+  .description("Switch to the canvas desktop")
+  .action(async () => {
+    try {
+      await session.switchToCanvasDesktop();
+      console.log("Switched to canvas desktop");
+    } catch (err) {
+      console.error(`Failed to switch desktop: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command("home")
+  .description("Switch back to the main desktop")
+  .action(async () => {
+    try {
+      await session.switchToMainDesktop();
+      console.log("Switched to main desktop");
+    } catch (err) {
+      console.error(`Failed to switch desktop: ${err}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================
+// Dependency Check Command
+// ============================================
+
+program
+  .command("check-deps")
+  .description("Check if all dependencies are installed")
+  .action(async () => {
+    console.log("Checking dependencies...\n");
+
+    const deps = await session.checkDependencies();
+
+    console.log(`Platform: ${deps.platform}`);
+    console.log(`VirtualDesktop module: ${deps.moduleInstalled ? "installed" : "not installed"}`);
+    console.log(`Ready: ${deps.ready ? "yes" : "no"}`);
+
+    if (deps.error) {
+      console.log(`\nIssue: ${deps.error}`);
+    }
+
+    if (!deps.moduleInstalled && deps.platform === "win32") {
+      console.log("\nTo install the VirtualDesktop PowerShell module:");
+      console.log("  Install-Module VirtualDesktop -Scope CurrentUser");
+    }
+  });
 
 program.parse();
