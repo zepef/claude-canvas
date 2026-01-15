@@ -1,7 +1,8 @@
 // Event Modal Component - Create/edit event form
 
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 import { ModalOverlay } from "./modal-overlay";
 import { TextInput } from "./text-input";
 import { TimePicker } from "./time-picker";
@@ -71,7 +72,7 @@ export function EventModal({
   const [allDay, setAllDay] = useState(event?.allDay || false);
   const [focusedField, setFocusedField] = useState<Field>("title");
 
-  useInput((input, key) => {
+  useSafeInput((input, key) => {
     if (key.escape) {
       onCancel();
       return;

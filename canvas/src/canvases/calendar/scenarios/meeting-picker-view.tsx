@@ -1,7 +1,8 @@
 // Meeting Picker View - Interactive calendar for selecting meeting times
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 import { useMouse, type MouseEvent } from "../hooks/use-mouse";
 import { useIPC } from "../hooks/use-ipc";
 import type { MeetingPickerConfig, MeetingPickerResult, NamedCalendar } from "../../../scenarios/types";
@@ -309,7 +310,7 @@ export function MeetingPickerView({ id, config, socketPath }: Props) {
   }, [cursorDay, cursorSlot, weekDays, totalSlots, slotGranularity, startHour]);
 
   // Keyboard controls
-  useInput((input, key) => {
+  useSafeInput((input, key) => {
     if (input === "q" || key.escape) {
       if (countdown !== null) {
         // Cancel countdown, deselect

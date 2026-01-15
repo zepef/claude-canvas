@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
+import { useSafeInput } from "../utils/use-safe-input";
 import { MeetingPickerView } from "./calendar/scenarios/meeting-picker-view";
 import { EditView } from "./calendar/scenarios/edit-view";
 import type { MeetingPickerConfig } from "../scenarios/types";
@@ -441,7 +442,7 @@ export function Calendar({ id, config, socketPath, scenario = "display" }: Props
   const weekDays = getWeekDays(currentDate);
   const today = new Date();
 
-  useInput((input, key) => {
+  useSafeInput((input, key) => {
     if (input === "q" || key.escape) {
       exit();
     } else if (input === "n" || key.rightArrow) {

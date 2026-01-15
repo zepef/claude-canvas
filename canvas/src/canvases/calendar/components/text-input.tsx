@@ -1,7 +1,8 @@
 // Text Input Component - Terminal text input field
 
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 
 interface TextInputProps {
   value: string;
@@ -27,7 +28,7 @@ export function TextInput({
     setCursorPosition(value.length);
   }, [value]);
 
-  useInput(
+  useSafeInput(
     (input, key) => {
       if (!focused) return;
 

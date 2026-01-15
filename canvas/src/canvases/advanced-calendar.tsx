@@ -2,7 +2,8 @@
 // Merges display, meeting picker, and edit functionalities
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
+import { useSafeInput } from "../utils/use-safe-input";
 import { useMouse, type MouseEvent } from "./calendar/hooks/use-mouse";
 import { useStorage } from "./calendar/hooks/use-storage";
 import { useIPC } from "./calendar/hooks/use-ipc";
@@ -465,7 +466,7 @@ export function AdvancedCalendar({ id, config, socketPath }: Props) {
   };
 
   // Handle keyboard input
-  useInput(
+  useSafeInput(
     (input, key) => {
       if (modalMode !== "closed") return;
 

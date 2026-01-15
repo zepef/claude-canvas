@@ -1,7 +1,8 @@
 // Time Picker Component - HH:MM time selection
 
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 
 interface TimePickerProps {
   value: string; // "HH:MM" format
@@ -22,7 +23,7 @@ export function TimePicker({
   // Track which part is being edited (0 = hours, 1 = minutes)
   const [editPart, setEditPart] = useState(0);
 
-  useInput(
+  useSafeInput(
     (input, key) => {
       if (!focused) return;
 

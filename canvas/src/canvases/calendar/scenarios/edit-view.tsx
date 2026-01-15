@@ -1,7 +1,8 @@
 // Edit View Component - Calendar with full CRUD operations
 
 import React, { useState, useEffect } from "react";
-import { Box, Text, useInput, useApp, useStdout } from "ink";
+import { Box, Text, useApp, useStdout } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 import { useStorage } from "../hooks/use-storage";
 import { EventModal } from "../components/event-modal";
 import { ConfirmDialog } from "../components/confirm-dialog";
@@ -145,7 +146,7 @@ export function EditView({ id, config, socketPath }: Props) {
     : null;
 
   // Handle keyboard input
-  useInput(
+  useSafeInput(
     (input, key) => {
       // Don't handle input when modal is open
       if (modalMode !== "closed") return;

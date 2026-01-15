@@ -1,7 +1,8 @@
 // Confirm Dialog Component - Yes/No confirmation
 
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 import { ModalOverlay } from "./modal-overlay";
 
 interface ConfirmDialogProps {
@@ -27,7 +28,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const [focused, setFocused] = useState<"confirm" | "cancel">("cancel");
 
-  useInput((input, key) => {
+  useSafeInput((input, key) => {
     if (key.escape) {
       onCancel();
       return;

@@ -1,7 +1,8 @@
 // Color Picker Component - Cycle through color options
 
 import React from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
+import { useSafeInput } from "../../../utils/use-safe-input";
 import { EVENT_COLORS } from "../types";
 
 // Available colors
@@ -23,7 +24,7 @@ export function ColorPicker({
   const currentIndex = COLORS.indexOf(value as keyof typeof EVENT_COLORS);
   const validIndex = currentIndex === -1 ? 0 : currentIndex;
 
-  useInput(
+  useSafeInput(
     (input, key) => {
       if (!focused) return;
 
