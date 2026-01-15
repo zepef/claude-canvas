@@ -39,7 +39,12 @@ program
         process.exit(1);
       }
     } else if (options.config) {
-      config = JSON.parse(options.config);
+      try {
+        config = JSON.parse(options.config);
+      } catch (e) {
+        console.error(`Invalid JSON in --config option: ${(e as Error).message}`);
+        process.exit(1);
+      }
     }
 
     const socketPath = options.socket;
@@ -114,7 +119,15 @@ program
   .option("--config <json>", "New canvas configuration (JSON)")
   .action(async (id: string, options) => {
     const socketPath = getSocketPath(id);
-    const config = options.config ? JSON.parse(options.config) : {};
+    let config = {};
+    if (options.config) {
+      try {
+        config = JSON.parse(options.config);
+      } catch (e) {
+        console.error(`Invalid JSON in --config option: ${(e as Error).message}`);
+        process.exit(1);
+      }
+    }
 
     try {
       await connectAndSend(id, socketPath, { type: "update", config });
@@ -234,7 +247,7 @@ async function connectAndSend(id: string, socketPath: string, message: unknown):
 async function sendAndReceive(id: string, socketPath: string, message: unknown): Promise<any> {
   const conn = await getConnection(id, socketPath);
 
-  return new Promise(async (resolve, reject) => {
+  return new Promise((resolve, reject) => {
     let resolved = false;
     const timeout = setTimeout(() => {
       if (!resolved) {
@@ -276,26 +289,25 @@ async function sendAndReceive(id: string, socketPath: string, message: unknown):
       },
     };
 
-    try {
-      if (conn.type === "tcp") {
-        await Bun.connect({
+    // Connect based on connection type
+    const connectPromise = conn.type === "tcp"
+      ? Bun.connect({
           hostname: conn.host!,
           port: conn.port!,
           socket: socketHandlers,
-        });
-      } else {
-        await Bun.connect({
+        })
+      : Bun.connect({
           unix: conn.socketPath!,
           socket: socketHandlers,
         });
-      }
-    } catch (err) {
+
+    connectPromise.catch((err) => {
       if (!resolved) {
         resolved = true;
         clearTimeout(timeout);
         reject(err);
       }
-    }
+    });
   });
 }
 
@@ -461,10 +473,20 @@ windowCmd
     try {
       let config: unknown;
       if (options.configFile) {
-        const file = Bun.file(options.configFile);
-        config = JSON.parse(await file.text());
+        try {
+          const file = Bun.file(options.configFile);
+          config = JSON.parse(await file.text());
+        } catch (e) {
+          console.error(`Failed to load or parse config file: ${(e as Error).message}`);
+          process.exit(1);
+        }
       } else if (options.config) {
-        config = JSON.parse(options.config);
+        try {
+          config = JSON.parse(options.config);
+        } catch (e) {
+          console.error(`Invalid JSON in --config option: ${(e as Error).message}`);
+          process.exit(1);
+        }
       }
 
       const window = await session.addWindow(kind, config);
@@ -517,10 +539,20 @@ program
     try {
       let config: unknown;
       if (options.configFile) {
-        const file = Bun.file(options.configFile);
-        config = JSON.parse(await file.text());
+        try {
+          const file = Bun.file(options.configFile);
+          config = JSON.parse(await file.text());
+        } catch (e) {
+          console.error(`Failed to load or parse config file: ${(e as Error).message}`);
+          process.exit(1);
+        }
       } else if (options.config) {
-        config = JSON.parse(options.config);
+        try {
+          config = JSON.parse(options.config);
+        } catch (e) {
+          console.error(`Invalid JSON in --config option: ${(e as Error).message}`);
+          process.exit(1);
+        }
       }
 
       const window = await session.assignCanvas(windowId, canvasKind, config);

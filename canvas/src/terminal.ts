@@ -260,11 +260,11 @@ async function spawnWindowsTerminalPane(
   configFile?: string,
   id?: string
 ): Promise<SpawnResult> {
-  return new Promise(async (resolve, reject) => {
-    // Create a launcher script to avoid escaping issues
-    const scriptId = id || `pane-${Date.now()}`;
-    const scriptPath = await createLaunchScript(scriptId, bunPath, cliPath, cmdArgs, configFile);
+  // Create a launcher script to avoid escaping issues
+  const scriptId = id || `pane-${Date.now()}`;
+  const scriptPath = await createLaunchScript(scriptId, bunPath, cliPath, cmdArgs, configFile);
 
+  return new Promise((resolve, reject) => {
     // Use wt.exe to create a split pane
     // -w 0 = current window
     // sp = split-pane

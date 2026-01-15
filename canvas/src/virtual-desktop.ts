@@ -7,6 +7,23 @@
 
 import { spawn, spawnSync } from "child_process";
 
+/**
+ * Sanitize a string for safe use in PowerShell double-quoted strings
+ * Escapes characters that could allow command injection
+ */
+function sanitizeForPowerShell(input: string): string {
+  if (!input) return "";
+  // Escape PowerShell special characters within double-quoted strings:
+  // - Backtick (`) is the escape character
+  // - Dollar sign ($) starts variable expansion
+  // - Double quote (") ends the string
+  // - Backtick itself needs escaping
+  return input
+    .replace(/`/g, "``")      // Escape backticks first
+    .replace(/\$/g, "`$")     // Escape dollar signs
+    .replace(/"/g, '`"');     // Escape double quotes
+}
+
 export interface DesktopInfo {
   index: number;
   name: string;
@@ -137,9 +154,10 @@ export async function getDesktopName(index: number): Promise<string> {
  * Create a new virtual desktop
  */
 export async function createDesktop(name?: string): Promise<number> {
+  const safeName = name ? sanitizeForPowerShell(name) : "";
   const result = await runPowerShell(`
     $desktop = New-Desktop
-    ${name ? `Set-DesktopName -Desktop $desktop -Name "${name}"` : ""}
+    ${safeName ? `Set-DesktopName -Desktop $desktop -Name "${safeName}"` : ""}
     # Get all desktops and find the index of the new one
     $count = Get-DesktopCount
     $index = $count - 1
@@ -156,9 +174,10 @@ export async function createDesktop(name?: string): Promise<number> {
  * Set the name of a desktop
  */
 export async function setDesktopName(index: number, name: string): Promise<void> {
+  const safeName = sanitizeForPowerShell(name);
   await runPowerShell(`
     $desktop = Get-Desktop -Index ${index}
-    Set-DesktopName -Desktop $desktop -Name "${name}"
+    Set-DesktopName -Desktop $desktop -Name "${safeName}"
   `);
 }
 
@@ -187,8 +206,9 @@ export async function removeDesktop(index: number): Promise<void> {
  */
 export async function findWindowByTitle(titlePattern: string): Promise<number | null> {
   try {
+    const safePattern = sanitizeForPowerShell(titlePattern);
     const result = await runPowerShell(`
-      $handle = Find-WindowHandle -Title "*${titlePattern}*"
+      $handle = Find-WindowHandle -Title "*${safePattern}*"
       if ($handle) {
         Write-Output $handle
       } else {

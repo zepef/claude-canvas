@@ -23,20 +23,23 @@ export async function createIPCServer(options: IPCServerOptions): Promise<IPCSer
   const { socketPath, onMessage, onClientConnect, onClientDisconnect, onError } = options;
 
   const clients = new Set<any>();
-  let buffer = "";
+  // Use per-socket buffers to prevent race conditions with multiple clients
+  const socketBuffers = new Map<any, string>();
 
   const socketHandlers = {
     open(socket: any) {
       clients.add(socket);
+      socketBuffers.set(socket, "");
       onClientConnect?.();
     },
 
     data(socket: any, data: any) {
-      // Accumulate data and parse complete JSON messages
+      // Accumulate data in per-socket buffer and parse complete JSON messages
+      let buffer = socketBuffers.get(socket) || "";
       buffer += data.toString();
 
       const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      socketBuffers.set(socket, lines.pop() || "");
 
       for (const line of lines) {
         if (line.trim()) {
@@ -52,6 +55,7 @@ export async function createIPCServer(options: IPCServerOptions): Promise<IPCSer
 
     close(socket: any) {
       clients.delete(socket);
+      socketBuffers.delete(socket);
       onClientDisconnect?.();
     },
 
