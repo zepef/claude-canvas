@@ -11,6 +11,18 @@ export interface StoredCalendarEvent extends CalendarEvent {
   updatedAt: string;
 }
 
+// Internal serialized type for JSON storage (dates as ISO strings)
+interface SerializedEvent {
+  id: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  color?: string;
+  allDay?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Storage file format
 export interface EventStorageFile {
   version: number;
@@ -52,7 +64,8 @@ export async function loadEvents(filePath: string): Promise<StoredCalendarEvent[
     }
 
     const content = await file.text();
-    const data: EventStorageFile = JSON.parse(content);
+    // JSON contains serialized events with string dates
+    const data: { version: number; events: SerializedEvent[]; metadata: { lastModified: string } } = JSON.parse(content);
 
     // Validate version
     if (data.version !== 1) {
@@ -60,7 +73,7 @@ export async function loadEvents(filePath: string): Promise<StoredCalendarEvent[
     }
 
     // Parse date strings back to Date objects in events
-    return data.events.map((event) => ({
+    return data.events.map((event): StoredCalendarEvent => ({
       ...event,
       startTime: new Date(event.startTime),
       endTime: new Date(event.endTime),
@@ -81,20 +94,22 @@ export async function saveEvents(
 ): Promise<void> {
   await ensureStorageDir(filePath);
 
-  // Serialize dates to ISO strings
-  const serializedEvents = events.map((event) => ({
+  // Serialize dates to ISO strings for JSON storage
+  const serializedEvents: SerializedEvent[] = events.map((event) => ({
     ...event,
     startTime: event.startTime instanceof Date
       ? event.startTime.toISOString()
-      : event.startTime,
+      : String(event.startTime),
     endTime: event.endTime instanceof Date
       ? event.endTime.toISOString()
-      : event.endTime,
+      : String(event.endTime),
   }));
 
-  const storage: EventStorageFile = {
+  // EventStorageFile expects StoredCalendarEvent[] but we're storing serialized strings
+  // The loadEvents function reverses this transformation
+  const storage = {
     version: 1,
-    events: serializedEvents as StoredCalendarEvent[],
+    events: serializedEvents,
     metadata: {
       lastModified: new Date().toISOString(),
     },

@@ -4,7 +4,7 @@
 import { createIPCServer } from "../ipc/server";
 import { getSocketPath } from "../ipc/types";
 import { spawnCanvas } from "../terminal";
-import type { CanvasMessage } from "../ipc/types";
+import type { CanvasMessage, ControllerMessage } from "../ipc/types";
 import type {
   MeetingPickerConfig,
   MeetingPickerResult,
@@ -39,7 +39,7 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
 
   let resolved = false;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let server: Awaited<ReturnType<typeof createIPCServer>> | null = null;
+  let server: Awaited<ReturnType<typeof createIPCServer<CanvasMessage, ControllerMessage>>> | null = null;
 
   const cleanup = () => {
     if (timeoutId) {
@@ -54,12 +54,13 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
   return new Promise((resolve) => {
     const initServer = async () => {
       try {
-        server = await createIPCServer({
+        // Server receives CanvasMessage from canvas, sends ControllerMessage to canvas
+        server = await createIPCServer<CanvasMessage, ControllerMessage>({
           socketPath,
           onClientConnect() {
             // Canvas connected, waiting for ready message
           },
-          onMessage(msg: CanvasMessage) {
+          onMessage(msg) {
             if (resolved) return;
 
             switch (msg.type) {

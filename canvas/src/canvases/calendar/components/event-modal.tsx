@@ -131,12 +131,6 @@ export function EventModal({
         onSave(newEvent as CalendarEvent);
         return;
       }
-
-      // If on allDay field, toggle it
-      if (focusedField === "allDay") {
-        setAllDay(!allDay);
-        return;
-      }
     }
 
     // Space toggles allDay

@@ -760,7 +760,7 @@ export function AdvancedCalendar({ id, config, socketPath }: Props) {
       });
     });
 
-    const slots: JSX.Element[] = [];
+    const slots: React.JSX.Element[] = [];
     for (let i = 0; i < totalSlots; i++) {
       const slotMinutes = i * slotGranularity;
       const hour = startHour + Math.floor(slotMinutes / 60);
@@ -808,7 +808,7 @@ export function AdvancedCalendar({ id, config, socketPath }: Props) {
       (e) => isSameDay(e.startTime, day) && !isAllDayEvent(e)
     );
 
-    const slots: JSX.Element[] = [];
+    const slots: React.JSX.Element[] = [];
     for (let i = 0; i < totalSlots; i++) {
       const height = slotHeights[i];
       const slotMinutes = i * slotGranularity;
@@ -840,7 +840,7 @@ export function AdvancedCalendar({ id, config, socketPath }: Props) {
       const conflictCount = countEventsAtSlot(dayIndex, i);
       const hasConflict = conflictCount > 1;
 
-      let content: JSX.Element;
+      let content: React.JSX.Element;
       if (slotEvent) {
         const textColor = (isCursor || isHovered) ? "black" : (TEXT_COLORS[slotEvent.color || "blue"] || "white");
         const bgColor = (isCursor || isHovered) ? "white" : slotEvent.color;

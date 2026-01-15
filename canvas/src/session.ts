@@ -346,6 +346,9 @@ export async function assignCanvas(
   }
 
   const window = session.windows[windowIndex];
+  if (!window) {
+    throw new Error(`Window at index ${windowIndex} not found`);
+  }
   const configJson = config ? JSON.stringify(config) : undefined;
 
   const updated = await wm.assignCanvas(window, canvasKind, configJson);
@@ -375,10 +378,13 @@ export async function swapCanvases(
   if (index1 === -1) throw new Error(`Window not found: ${windowId1}`);
   if (index2 === -1) throw new Error(`Window not found: ${windowId2}`);
 
-  const [updated1, updated2] = await wm.swapCanvases(
-    session.windows[index1],
-    session.windows[index2]
-  );
+  const win1 = session.windows[index1];
+  const win2 = session.windows[index2];
+  if (!win1 || !win2) {
+    throw new Error("Window not found at expected index");
+  }
+
+  const [updated1, updated2] = await wm.swapCanvases(win1, win2);
 
   session.windows[index1] = updated1;
   session.windows[index2] = updated2;
@@ -478,7 +484,7 @@ export async function reconnectSession(): Promise<SessionState | null> {
  */
 export async function getDetailedStatus(): Promise<{
   session: SessionState | null;
-  status: wm.getSessionStatus extends (s: SessionState) => Promise<infer R> ? R : never;
+  status: Awaited<ReturnType<typeof wm.getSessionStatus>>;
 } | null> {
   const session = await wm.loadSession();
   if (!session) {

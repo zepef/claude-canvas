@@ -5,23 +5,23 @@ import type { ControllerMessage, CanvasMessage, ConnectionInfo } from "./types";
 import { isWindows, getPortFilePath } from "./types";
 import type { Socket } from "bun";
 
-export interface IPCClientOptions {
+export interface IPCClientOptions<TReceive = CanvasMessage, TSend = ControllerMessage> {
   socketPath: string; // For Unix; on Windows, port is read from port file
-  onMessage: (msg: CanvasMessage) => void;
+  onMessage: (msg: TReceive) => void;
   onDisconnect: () => void;
   onError?: (error: Error) => void;
 }
 
-export interface IPCClient {
-  send: (msg: ControllerMessage) => void;
+export interface IPCClient<TSend = ControllerMessage> {
+  send: (msg: TSend) => void;
   close: () => void;
   isConnected: () => boolean;
 }
 
 // Connect using socketPath (for Unix) or by reading port file (for Windows)
-export async function connectToController(
-  options: IPCClientOptions
-): Promise<IPCClient> {
+export async function connectToController<TReceive = CanvasMessage, TSend = ControllerMessage>(
+  options: IPCClientOptions<TReceive, TSend>
+): Promise<IPCClient<TSend>> {
   const { socketPath, onMessage, onDisconnect, onError } = options;
 
   let connected = false;
@@ -42,7 +42,7 @@ export async function connectToController(
       for (const line of lines) {
         if (line.trim()) {
           try {
-            const msg = JSON.parse(line) as CanvasMessage;
+            const msg = JSON.parse(line) as TReceive;
             onMessage(msg);
           } catch (e) {
             onError?.(new Error(`Failed to parse message: ${line}`));
@@ -66,7 +66,7 @@ export async function connectToController(
   if (isWindows) {
     // Windows: Read port from port file and connect via TCP
     const match = socketPath.match(/canvas-([^.]+)\.sock$/);
-    if (!match) {
+    if (!match || !match[1]) {
       throw new Error(`Invalid socket path format: ${socketPath}`);
     }
 
@@ -98,7 +98,7 @@ export async function connectToController(
   connected = true;
 
   return {
-    send(msg: ControllerMessage) {
+    send(msg: TSend) {
       if (connected) {
         socket.write(JSON.stringify(msg) + "\n");
       }
@@ -116,10 +116,10 @@ export async function connectToController(
 }
 
 // Connect directly with connection info (more explicit API)
-export async function connectWithInfo(
+export async function connectWithInfo<TReceive = CanvasMessage, TSend = ControllerMessage>(
   connectionInfo: ConnectionInfo,
-  options: Omit<IPCClientOptions, "socketPath">
-): Promise<IPCClient> {
+  options: Omit<IPCClientOptions<TReceive, TSend>, "socketPath">
+): Promise<IPCClient<TSend>> {
   const { onMessage, onDisconnect, onError } = options;
 
   let connected = false;
@@ -138,7 +138,7 @@ export async function connectWithInfo(
       for (const line of lines) {
         if (line.trim()) {
           try {
-            const msg = JSON.parse(line) as CanvasMessage;
+            const msg = JSON.parse(line) as TReceive;
             onMessage(msg);
           } catch (e) {
             onError?.(new Error(`Failed to parse message: ${line}`));
@@ -160,14 +160,20 @@ export async function connectWithInfo(
   let socket: any;
 
   if (connectionInfo.type === "tcp") {
+    if (connectionInfo.port === undefined) {
+      throw new Error("TCP connection requires port");
+    }
     socket = await Bun.connect({
       hostname: connectionInfo.host || "127.0.0.1",
-      port: connectionInfo.port!,
+      port: connectionInfo.port,
       socket: socketHandlers,
     });
   } else {
+    if (!connectionInfo.socketPath) {
+      throw new Error("Unix connection requires socketPath");
+    }
     socket = await Bun.connect({
-      unix: connectionInfo.socketPath!,
+      unix: connectionInfo.socketPath,
       socket: socketHandlers,
     });
   }
@@ -175,7 +181,7 @@ export async function connectWithInfo(
   connected = true;
 
   return {
-    send(msg: ControllerMessage) {
+    send(msg: TSend) {
       if (connected) {
         socket.write(JSON.stringify(msg) + "\n");
       }
@@ -193,11 +199,11 @@ export async function connectWithInfo(
 }
 
 // Attempt to connect with retries
-export async function connectWithRetry(
-  options: IPCClientOptions,
+export async function connectWithRetry<TReceive = CanvasMessage, TSend = ControllerMessage>(
+  options: IPCClientOptions<TReceive, TSend>,
   maxRetries = 10,
   retryDelayMs = 100
-): Promise<IPCClient> {
+): Promise<IPCClient<TSend>> {
   let lastError: Error | null = null;
 
   for (let i = 0; i < maxRetries; i++) {

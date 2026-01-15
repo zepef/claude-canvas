@@ -240,7 +240,7 @@ export function EditView({ id, config, socketPath }: Props) {
 
   // Render time column
   const renderTimeColumn = () => {
-    const slots: JSX.Element[] = [];
+    const slots: React.JSX.Element[] = [];
     for (let i = 0; i < totalSlots; i++) {
       const hour = START_HOUR + Math.floor(i / 2);
       const isFirstHalf = i % 2 === 0;
@@ -264,7 +264,7 @@ export function EditView({ id, config, socketPath }: Props) {
       (e) => isSameDay(e.startTime, day) && !isAllDayEvent(e)
     );
 
-    const slots: JSX.Element[] = [];
+    const slots: React.JSX.Element[] = [];
     for (let i = 0; i < totalSlots; i++) {
       const slotHour = START_HOUR + Math.floor(i / 2);
       const slotMinute = (i % 2) * 30;
@@ -285,7 +285,7 @@ export function EditView({ id, config, socketPath }: Props) {
         slotEvent.startTime.getHours() === slotHour &&
         Math.floor(slotEvent.startTime.getMinutes() / 30) === i % 2;
 
-      let content: JSX.Element;
+      let content: React.JSX.Element;
       if (slotEvent) {
         const textColor = TEXT_COLORS[slotEvent.color || "blue"] || "white";
         const title = isEventStart ? ` ${slotEvent.title}`.slice(0, columnWidth - 2) : "";
