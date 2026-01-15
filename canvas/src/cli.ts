@@ -1,10 +1,14 @@
 #!/usr/bin/env bun
 import { program } from "commander";
+import type { Socket } from "bun";
 import { detectTerminal, spawnCanvas, getTerminalInfo } from "./terminal";
 import { isWindows, getSocketPath, getPortFilePath } from "./ipc/types";
 import { existsSync } from "node:fs";
 import * as session from "./session";
 import type { CanvasWindow } from "./window-manager";
+
+// Type for IPC socket
+type IPCSocket = Socket<undefined>;
 
 // Set window title via ANSI escape codes
 function setWindowTitle(title: string) {
@@ -244,7 +248,7 @@ async function connectAndSend(id: string, socketPath: string, message: unknown):
   }
 }
 
-async function sendAndReceive(id: string, socketPath: string, message: unknown): Promise<any> {
+async function sendAndReceive(id: string, socketPath: string, message: unknown): Promise<unknown> {
   const conn = await getConnection(id, socketPath);
 
   return new Promise((resolve, reject) => {
@@ -257,19 +261,20 @@ async function sendAndReceive(id: string, socketPath: string, message: unknown):
     }, 2000);
 
     const socketHandlers = {
-      data(socket: any, data: any) {
+      data(socket: IPCSocket, data: Buffer) {
         if (resolved) return;
         clearTimeout(timeout);
         resolved = true;
         try {
           const response = JSON.parse(data.toString().trim());
           resolve(response);
-        } catch {
+        } catch (err) {
+          // Invalid JSON response from canvas - treat as no response
           resolve(null);
         }
         socket.end();
       },
-      open(socket: any) {
+      open(socket: IPCSocket) {
         const msg = JSON.stringify(message);
         socket.write(msg + "\n");
       },
@@ -280,7 +285,7 @@ async function sendAndReceive(id: string, socketPath: string, message: unknown):
           resolve(null);
         }
       },
-      error(socket: any, error: Error) {
+      error(socket: IPCSocket, error: Error) {
         if (!resolved) {
           resolved = true;
           clearTimeout(timeout);
@@ -603,6 +608,224 @@ program
       console.log("Switched to main desktop");
     } catch (err) {
       console.error(`Failed to switch desktop: ${err}`);
+      process.exit(1);
+    }
+  });
+
+// ============================================
+// Grid Management Commands
+// ============================================
+
+const gridCmd = program
+  .command("grid")
+  .description("Manage grid-based window layout");
+
+gridCmd
+  .command("configure")
+  .description("Configure grid dimensions and margins")
+  .option("-r, --rows <count>", "Number of rows", "3")
+  .option("-c, --columns <count>", "Number of columns", "3")
+  .option("-g, --gap <pixels>", "Gap between cells", "4")
+  .option("--gap-h <pixels>", "Horizontal gap (overrides --gap)")
+  .option("--gap-v <pixels>", "Vertical gap (overrides --gap)")
+  .option("-m, --monitor <index>", "Monitor index", "0")
+  .option("--margin-top <pixels>", "Top margin")
+  .option("--margin-bottom <pixels>", "Bottom margin")
+  .option("--margin-left <pixels>", "Left margin")
+  .option("--margin-right <pixels>", "Right margin")
+  .option("--margin <pixels>", "All margins")
+  .action(async (options) => {
+    try {
+      const gap = parseInt(options.gap, 10);
+      const margin = options.margin ? parseInt(options.margin, 10) : 0;
+
+      const gridState = await session.configureGrid({
+        rows: parseInt(options.rows, 10),
+        columns: parseInt(options.columns, 10),
+        cellGapHorizontal: options.gapH ? parseInt(options.gapH, 10) : gap,
+        cellGapVertical: options.gapV ? parseInt(options.gapV, 10) : gap,
+        monitorIndex: parseInt(options.monitor, 10),
+        marginTop: options.marginTop ? parseInt(options.marginTop, 10) : margin,
+        marginBottom: options.marginBottom ? parseInt(options.marginBottom, 10) : margin,
+        marginLeft: options.marginLeft ? parseInt(options.marginLeft, 10) : margin,
+        marginRight: options.marginRight ? parseInt(options.marginRight, 10) : margin,
+      });
+
+      console.log("Grid configured:");
+      console.log(`  Rows: ${gridState.config.rows}`);
+      console.log(`  Columns: ${gridState.config.columns}`);
+      console.log(`  Monitor: ${gridState.config.monitorIndex}`);
+      console.log(`  Gaps: ${gridState.config.cellGapHorizontal}x${gridState.config.cellGapVertical}px`);
+    } catch (err) {
+      console.error(`Failed to configure grid: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("assign <window-id> <cell-spec>")
+  .description("Assign a window to grid cell(s)")
+  .addHelpText("after", `
+Cell spec formats:
+  A1        Single cell (Excel-style)
+  A1:B2     Range of cells (Excel-style)
+  0,0       Single cell (row,column)
+  0,0:2x3   Span starting at (0,0), 2 rows x 3 columns
+`)
+  .option("--no-position", "Don't immediately position the window")
+  .action(async (windowId, cellSpec, options) => {
+    try {
+      const window = await session.assignWindowToCell(windowId, cellSpec, options.position);
+      const specLabel = session.formatCellSpecExcel(window.gridAssignment!);
+      console.log(`Assigned ${windowId} to cell ${specLabel}`);
+      if (options.position && window.position) {
+        console.log(`  Position: (${window.position.x}, ${window.position.y})`);
+        console.log(`  Size: ${window.position.width}x${window.position.height}`);
+      }
+    } catch (err) {
+      console.error(`Failed to assign window: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("show")
+  .description("Display grid layout visualization")
+  .option("--json", "Output as JSON")
+  .action(async (options) => {
+    try {
+      if (options.json) {
+        const layout = await session.getGridLayout();
+        if (!layout) {
+          console.log("{}");
+          return;
+        }
+        console.log(JSON.stringify(layout, null, 2));
+      } else {
+        const viz = await session.visualizeGrid();
+        console.log(viz);
+      }
+    } catch (err) {
+      console.error(`Failed to show grid: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("move <window-id> <cell-spec>")
+  .description("Move a window to a different cell")
+  .option("--no-position", "Don't immediately position the window")
+  .action(async (windowId, cellSpec, options) => {
+    try {
+      await session.moveWindowInGrid(windowId, cellSpec, options.position);
+      console.log(`Moved ${windowId} to ${cellSpec}`);
+    } catch (err) {
+      console.error(`Failed to move window: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("swap <window-id-1> <window-id-2>")
+  .description("Swap grid positions of two windows")
+  .option("--no-position", "Don't immediately reposition windows")
+  .action(async (windowId1, windowId2, options) => {
+    try {
+      await session.swapGridPositions(windowId1, windowId2, options.position);
+      console.log(`Swapped positions of ${windowId1} and ${windowId2}`);
+    } catch (err) {
+      console.error(`Failed to swap positions: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("apply")
+  .description("Reposition all windows according to grid assignments")
+  .action(async () => {
+    try {
+      const result = await session.applyGridPositions();
+      console.log(`Positioned ${result.positioned.length} windows`);
+      if (result.failed.length > 0) {
+        console.log(`Failed to position: ${result.failed.join(", ")}`);
+      }
+    } catch (err) {
+      console.error(`Failed to apply positions: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("info")
+  .description("Show grid and monitor information")
+  .action(async () => {
+    try {
+      const config = await session.getGridConfig();
+      if (!config) {
+        console.log("No grid configured");
+        console.log("\nConfigure one with: canvas grid configure");
+        return;
+      }
+
+      console.log("Grid Configuration:");
+      console.log(`  Dimensions: ${config.rows} rows x ${config.columns} columns`);
+      console.log(`  Gaps: ${config.cellGapHorizontal}x${config.cellGapVertical}px`);
+      console.log(`  Margins: T${config.marginTop} B${config.marginBottom} L${config.marginLeft} R${config.marginRight}`);
+
+      const monitor = await session.getMonitorInfo();
+      if (monitor) {
+        console.log(`\nMonitor ${config.monitorIndex}:`);
+        console.log(`  Work area: ${monitor.workAreaWidth}x${monitor.workAreaHeight}`);
+        console.log(`  Position: (${monitor.workAreaX}, ${monitor.workAreaY})`);
+        console.log(`  Primary: ${monitor.isPrimary ? "yes" : "no"}`);
+      }
+
+      const available = await session.getAvailableCells();
+      console.log(`\nAvailable cells: ${available.length}`);
+      if (available.length > 0 && available.length <= 9) {
+        const cellNames = available.map(c => {
+          // Import cell notation function inline since we can't add imports mid-file
+          const colStr = String.fromCharCode(65 + c.column);
+          const rowStr = (c.row + 1).toString();
+          return colStr + rowStr;
+        });
+        console.log(`  ${cellNames.join(", ")}`);
+      }
+    } catch (err) {
+      console.error(`Failed to get grid info: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("remove <window-id>")
+  .description("Remove a window from the grid (keeps window open)")
+  .action(async (windowId) => {
+    try {
+      await session.removeWindowFromGrid(windowId);
+      console.log(`Removed ${windowId} from grid`);
+    } catch (err) {
+      console.error(`Failed to remove from grid: ${err}`);
+      process.exit(1);
+    }
+  });
+
+gridCmd
+  .command("monitors")
+  .description("List all available monitors")
+  .action(async () => {
+    try {
+      const monitors = await session.getAllMonitors();
+      console.log("Available Monitors:");
+      for (const m of monitors) {
+        console.log(`\n  Monitor ${m.index}:`);
+        console.log(`    Device: ${m.name}`);
+        console.log(`    Resolution: ${m.width}x${m.height}`);
+        console.log(`    Work area: ${m.workAreaWidth}x${m.workAreaHeight} at (${m.workAreaX}, ${m.workAreaY})`);
+        console.log(`    Primary: ${m.isPrimary ? "yes" : "no"}`);
+      }
+    } catch (err) {
+      console.error(`Failed to list monitors: ${err}`);
       process.exit(1);
     }
   });

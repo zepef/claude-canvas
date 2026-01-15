@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { isWindows, getSocketPath, getTempFilePath } from "./ipc/types";
+import { formatError, failedTo } from "./utils/errors";
 
 export interface TerminalEnvironment {
   inTmux: boolean;
@@ -63,7 +64,7 @@ async function spawnCanvasUnix(
   env?: TerminalEnvironment
 ): Promise<SpawnResult> {
   if (!env?.inTmux) {
-    throw new Error("Canvas requires tmux on Unix/macOS. Please run inside a tmux session.");
+    throw new Error(formatError("terminal", "Canvas requires tmux on Unix/macOS. Please run inside a tmux session."));
   }
 
   // Get the directory of this script (skill directory)
@@ -89,11 +90,11 @@ async function spawnCanvasUnix(
   const result = await spawnTmux(command);
   if (result) return { method: "tmux" };
 
-  throw new Error("Failed to spawn tmux pane");
+  throw new Error(failedTo("terminal", "spawn tmux pane"));
 }
 
 // File to track the canvas pane ID (Unix)
-const CANVAS_PANE_FILE_UNIX = "/tmp/claude-canvas-pane-id";
+const CANVAS_PANE_FILE_UNIX = getTempFilePath("claude-canvas-pane-id");
 
 async function getCanvasPaneId(): Promise<string | null> {
   try {
@@ -110,8 +111,9 @@ async function getCanvasPaneId(): Promise<string | null> {
       // Stale pane reference - clean up the file
       await Bun.write(CANVAS_PANE_FILE_UNIX, "");
     }
-  } catch {
-    // Ignore errors
+  } catch (err) {
+    // Expected: Pane file may not exist or be inaccessible
+    // This is normal on first run or after system cleanup
   }
   return null;
 }
@@ -287,7 +289,7 @@ async function spawnWindowsTerminalPane(
     });
 
     proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn Windows Terminal pane: ${err.message}`));
+      reject(new Error(failedTo("terminal", "spawn Windows Terminal pane", undefined, err)));
     });
 
     // wt.exe returns immediately, so we consider it successful if spawn didn't error
@@ -351,7 +353,7 @@ async function spawnNewTerminalWindow(
       });
 
       proc.on("error", (err) => {
-        reject(new Error(`Failed to spawn terminal window: ${err.message}`));
+        reject(new Error(failedTo("terminal", "spawn terminal window", undefined, err)));
       });
 
       proc.unref();
@@ -381,7 +383,7 @@ export async function spawnCanvasNewWindow(
   options: NewWindowOptions = {}
 ): Promise<SpawnResult> {
   if (!isWindows) {
-    throw new Error("spawnCanvasNewWindow is only supported on Windows");
+    throw new Error(formatError("terminal", "spawnCanvasNewWindow is only supported on Windows"));
   }
 
   const srcDir = import.meta.dir;
@@ -422,7 +424,7 @@ export async function spawnCanvasNewWindow(
     });
 
     proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn new window: ${err.message}`));
+      reject(new Error(failedTo("terminal", "spawn new window", undefined, err)));
     });
 
     proc.unref();
@@ -446,7 +448,8 @@ export function isWindowsTerminalAvailable(): boolean {
   try {
     const result = spawnSync("where", ["wt.exe"], { shell: true });
     return result.status === 0;
-  } catch {
+  } catch (err) {
+    // 'where' command failed - Windows Terminal likely not available
     return false;
   }
 }

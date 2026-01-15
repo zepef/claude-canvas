@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import * as vd from "./virtual-desktop";
 import { getTempFilePath, getSocketPath, isWindows } from "./ipc/types";
+import type { CellSpan, GridConfig, GridState } from "./grid";
 
 /**
  * Find Windows Terminal executable
@@ -89,6 +90,7 @@ export interface CanvasWindow {
     width: number;
     height: number;
   };
+  gridAssignment?: CellSpan;   // Grid cell assignment (optional)
 }
 
 export interface SessionState {
@@ -98,6 +100,8 @@ export interface SessionState {
   windows: CanvasWindow[];
   createdAt: string;
   updatedAt: string;
+  gridConfig?: GridConfig;     // Optional grid configuration
+  gridState?: GridState;       // Optional grid state with assignments
 }
 
 const SESSION_FILE = getTempFilePath("canvas-session.json");
@@ -112,8 +116,9 @@ export async function loadSession(): Promise<SessionState | null> {
       const content = await file.text();
       return JSON.parse(content);
     }
-  } catch {
-    // Ignore errors
+  } catch (err) {
+    // Session file may be corrupted or inaccessible - treat as no session
+    console.error(`Failed to load session: ${err instanceof Error ? err.message : String(err)}`);
   }
   return null;
 }
@@ -135,8 +140,9 @@ export async function deleteSession(): Promise<void> {
     if (await file.exists()) {
       await Bun.$`del "${SESSION_FILE}"`.quiet();
     }
-  } catch {
-    // Ignore errors
+  } catch (err) {
+    // Session file deletion failed - may already be deleted or locked
+    // This is non-critical so we continue silently
   }
 }
 
@@ -389,8 +395,8 @@ export async function swapCanvases(
 export async function closeCanvasWindow(window: CanvasWindow): Promise<void> {
   try {
     await vd.closeWindow(window.windowHandle);
-  } catch {
-    // Window may already be closed
+  } catch (err) {
+    // Expected: Window may already be closed by user or system
   }
 }
 
@@ -463,3 +469,6 @@ export async function getSessionStatus(session: SessionState): Promise<{
     windows,
   };
 }
+
+// Re-export grid types for convenience
+export type { CellSpan, GridConfig, GridState } from "./grid";

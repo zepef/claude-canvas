@@ -101,7 +101,8 @@ export async function isModuleInstalled(): Promise<boolean> {
   try {
     const result = await runPowerShell("Get-Module -ListAvailable VirtualDesktop | Select-Object -First 1");
     return result.length > 0;
-  } catch {
+  } catch (err) {
+    // PowerShell or module query failed - assume not installed
     return false;
   }
 }
@@ -219,7 +220,8 @@ export async function findWindowByTitle(titlePattern: string): Promise<number | 
       return parseInt(result, 10);
     }
     return null;
-  } catch {
+  } catch (err) {
+    // Window not found or PowerShell command failed - expected behavior for non-existent windows
     return null;
   }
 }
@@ -303,7 +305,9 @@ export async function listDesktops(): Promise<DesktopInfo[]> {
     const parsed = JSON.parse(result);
     // Handle single item (not array)
     return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
+  } catch (err) {
+    // JSON parsing failed - likely malformed output from PowerShell
+    console.error(`Failed to parse desktop list: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 }
@@ -423,7 +427,160 @@ export async function listWindows(): Promise<WindowInfo[]> {
   try {
     const parsed = JSON.parse(result);
     return Array.isArray(parsed) ? parsed : [parsed];
-  } catch {
+  } catch (err) {
+    // JSON parsing failed - likely malformed output from PowerShell
+    console.error(`Failed to parse window list: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
+}
+
+// ============================================
+// Grid-related window positioning functions
+// ============================================
+
+export interface MonitorBounds {
+  index: number;
+  name: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  workArea: { x: number; y: number; width: number; height: number };
+  isPrimary: boolean;
+}
+
+/**
+ * Get all monitors information
+ */
+export async function getMonitors(): Promise<MonitorBounds[]> {
+  const result = await runPowerShell(`
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $result = @()
+    $index = 0
+
+    foreach ($screen in $screens) {
+      $result += @{
+        index = $index
+        name = $screen.DeviceName
+        bounds = @{
+          x = $screen.Bounds.X
+          y = $screen.Bounds.Y
+          width = $screen.Bounds.Width
+          height = $screen.Bounds.Height
+        }
+        workArea = @{
+          x = $screen.WorkingArea.X
+          y = $screen.WorkingArea.Y
+          width = $screen.WorkingArea.Width
+          height = $screen.WorkingArea.Height
+        }
+        isPrimary = $screen.Primary
+      }
+      $index++
+    }
+
+    $result | ConvertTo-Json -Depth 3 -Compress
+  `);
+
+  try {
+    const parsed = JSON.parse(result);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (err) {
+    // JSON parsing failed - likely malformed output from PowerShell
+    console.error(`Failed to parse monitor list: ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
+/**
+ * Set window position and size
+ */
+export async function setWindowRect(
+  windowHandle: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): Promise<void> {
+  await runPowerShell(`
+    Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+      public class WindowPos {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPos(
+          IntPtr hWnd, IntPtr hWndInsertAfter,
+          int X, int Y, int cx, int cy, uint uFlags
+        );
+
+        [DllImport("user32.dll")]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern bool IsZoomed(IntPtr hWnd);
+      }
+"@
+
+    $handle = [IntPtr]${windowHandle}
+
+    # Restore window if minimized or maximized
+    if ([WindowPos]::IsIconic($handle) -or [WindowPos]::IsZoomed($handle)) {
+      [WindowPos]::ShowWindow($handle, 9) | Out-Null
+      Start-Sleep -Milliseconds 50
+    }
+
+    # Set position (SWP_SHOWWINDOW = 0x0040)
+    $result = [WindowPos]::SetWindowPos($handle, [IntPtr]::Zero, ${x}, ${y}, ${width}, ${height}, 0x0040)
+
+    if (-not $result) {
+      throw "SetWindowPos failed"
+    }
+  `);
+}
+
+/**
+ * Get current window position and size
+ */
+export async function getWindowRect(
+  windowHandle: number
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  const result = await runPowerShell(`
+    Add-Type @"
+      using System;
+      using System.Runtime.InteropServices;
+
+      [StructLayout(LayoutKind.Sequential)]
+      public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+      }
+
+      public class WindowRect {
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+      }
+"@
+
+    $handle = [IntPtr]${windowHandle}
+    $rect = New-Object RECT
+
+    $success = [WindowRect]::GetWindowRect($handle, [ref]$rect)
+
+    if (-not $success) {
+      throw "GetWindowRect failed"
+    }
+
+    @{
+      x = $rect.Left
+      y = $rect.Top
+      width = $rect.Right - $rect.Left
+      height = $rect.Bottom - $rect.Top
+    } | ConvertTo-Json -Compress
+  `);
+
+  return JSON.parse(result);
 }

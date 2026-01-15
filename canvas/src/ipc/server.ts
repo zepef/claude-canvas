@@ -1,9 +1,13 @@
 // IPC Server - Canvas side (for standalone CLI mode)
 // Listens on a Unix domain socket (Unix/macOS) or TCP socket (Windows)
 
+import type { Socket } from "bun";
 import type { ControllerMessage, CanvasMessage } from "./types";
 import { isWindows, getPortFilePath } from "./types";
 import { unlinkSync, existsSync } from "fs";
+
+// Type for IPC socket (TCP or Unix domain socket)
+type IPCSocket = Socket<undefined>;
 
 export interface IPCServerOptions<TReceive = ControllerMessage, TSend = CanvasMessage> {
   socketPath: string; // For Unix, this is the socket path; for Windows, this is used to derive the port file
@@ -24,18 +28,18 @@ export async function createIPCServer<TReceive = ControllerMessage, TSend = Canv
 ): Promise<IPCServer<TSend>> {
   const { socketPath, onMessage, onClientConnect, onClientDisconnect, onError } = options;
 
-  const clients = new Set<any>();
+  const clients = new Set<IPCSocket>();
   // Use per-socket buffers to prevent race conditions with multiple clients
-  const socketBuffers = new Map<any, string>();
+  const socketBuffers = new Map<IPCSocket, string>();
 
   const socketHandlers = {
-    open(socket: any) {
+    open(socket: IPCSocket) {
       clients.add(socket);
       socketBuffers.set(socket, "");
       onClientConnect?.();
     },
 
-    data(socket: any, data: any) {
+    data(socket: IPCSocket, data: Buffer) {
       // Accumulate data in per-socket buffer and parse complete JSON messages
       let buffer = socketBuffers.get(socket) || "";
       buffer += data.toString();
@@ -55,13 +59,13 @@ export async function createIPCServer<TReceive = ControllerMessage, TSend = Canv
       }
     },
 
-    close(socket: any) {
+    close(socket: IPCSocket) {
       clients.delete(socket);
       socketBuffers.delete(socket);
       onClientDisconnect?.();
     },
 
-    error(socket: any, error: Error) {
+    error(socket: IPCSocket, error: Error) {
       onError?.(error);
     },
   };

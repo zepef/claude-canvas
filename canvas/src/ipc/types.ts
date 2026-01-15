@@ -1,6 +1,7 @@
 // IPC Message Types for Canvas Communication
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { notFound, failedTo, getErrorMessage } from "../utils/errors";
 
 // Platform detection
 export const isWindows = process.platform === "win32";
@@ -45,7 +46,8 @@ export function getSocketPath(id: string): string {
     // The actual port is stored in the port file
     return join(tmpdir(), `canvas-${id}.sock`);
   }
-  return `/tmp/canvas-${id}.sock`;
+  // Use os.tmpdir() for cross-platform compatibility
+  return join(tmpdir(), `canvas-${id}.sock`);
 }
 
 // Get temp file path (cross-platform)
@@ -66,10 +68,11 @@ export async function getConnectionInfo(id: string): Promise<ConnectionInfo> {
           return { type: "tcp", host: "127.0.0.1", port };
         }
       }
-    } catch {
-      // Fall through to error
+    } catch (err) {
+      // Port file read failed - connection info unavailable
+      throw new Error(failedTo("ipc", "read connection info", `canvas ${id}`, err));
     }
-    throw new Error(`Cannot find connection info for canvas ${id}`);
+    throw new Error(notFound("ipc", "Connection info", `canvas ${id}`));
   } else {
     // On Unix, use socket path
     return { type: "unix", socketPath: getSocketPath(id) };

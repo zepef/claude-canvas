@@ -11,6 +11,18 @@ import type {
   DocumentConfig,
   DocumentSelection,
 } from "../scenarios/types";
+import type { FlightConfig, FlightResult } from "../canvases/flight/types";
+import {
+  validateMeetingPickerConfig,
+  validateDocumentConfig,
+  validateFlightConfig,
+  validateBaseCalendarConfig,
+  formatValidationErrors,
+} from "./validation";
+import { timeout, connectionError, failedTo, getErrorMessage } from "../utils/errors";
+
+// Re-export types for API consumers
+export type { FlightConfig, FlightResult };
 
 export interface CanvasResult<T = unknown> {
   success: boolean;
@@ -20,7 +32,8 @@ export interface CanvasResult<T = unknown> {
 }
 
 export interface SpawnOptions {
-  timeout?: number; // ms, default 5 minutes
+  timeout?: number; // ms, default 5 minutes for user selection
+  connectionTimeout?: number; // ms, default 30 seconds for canvas to connect
   onReady?: () => void;
 }
 
@@ -33,18 +46,24 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
   config: TConfig,
   options: SpawnOptions = {}
 ): Promise<CanvasResult<TResult>> {
-  const { timeout = 300000, onReady } = options;
+  const { timeout: selectionTimeout = 300000, connectionTimeout = 30000, onReady } = options;
   const id = `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const socketPath = getSocketPath(id);
 
   let resolved = false;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let connectionTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let clientConnected = false;
   let server: Awaited<ReturnType<typeof createIPCServer<CanvasMessage, ControllerMessage>>> | null = null;
 
   const cleanup = () => {
     if (timeoutId) {
       clearTimeout(timeoutId);
       timeoutId = null;
+    }
+    if (connectionTimeoutId) {
+      clearTimeout(connectionTimeoutId);
+      connectionTimeoutId = null;
     }
     if (server) {
       server.close();
@@ -58,7 +77,12 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
         server = await createIPCServer<CanvasMessage, ControllerMessage>({
           socketPath,
           onClientConnect() {
-            // Canvas connected, waiting for ready message
+            // Canvas connected, clear connection timeout
+            clientConnected = true;
+            if (connectionTimeoutId) {
+              clearTimeout(connectionTimeoutId);
+              connectionTimeoutId = null;
+            }
           },
           onMessage(msg) {
             if (resolved) return;
@@ -91,7 +115,7 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
                 cleanup();
                 resolve({
                   success: false,
-                  error: msg.message,
+                  error: failedTo("canvas", "process request", scenario, msg.message),
                 });
                 break;
 
@@ -106,7 +130,7 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
               cleanup();
               resolve({
                 success: false,
-                error: "Canvas disconnected unexpectedly",
+                error: connectionError("canvas", "disconnected unexpectedly"),
               });
             }
           },
@@ -116,37 +140,50 @@ export async function spawnCanvasWithIPC<TConfig, TResult>(
               cleanup();
               resolve({
                 success: false,
-                error: error.message,
+                error: failedTo("ipc", "communicate with canvas", undefined, error),
               });
             }
           },
         });
 
-        // Set timeout
-        timeoutId = setTimeout(() => {
-          if (!resolved) {
+        // Set connection timeout - fires if canvas doesn't connect within connectionTimeout
+        connectionTimeoutId = setTimeout(() => {
+          if (!resolved && !clientConnected) {
             resolved = true;
-            server?.broadcast({ type: "close" } as any);
             cleanup();
             resolve({
               success: false,
-              error: "Timeout waiting for user selection",
+              error: timeout("connection", "Canvas connection", connectionTimeout),
             });
           }
-        }, timeout);
+        }, connectionTimeout);
+
+        // Set overall timeout for user selection
+        timeoutId = setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            const closeMsg: ControllerMessage = { type: "close" };
+            server?.broadcast(closeMsg);
+            cleanup();
+            resolve({
+              success: false,
+              error: timeout("canvas", "User selection", selectionTimeout),
+            });
+          }
+        }, selectionTimeout);
 
         // Spawn the canvas
         await spawnCanvas(kind, id, JSON.stringify(config), {
           socketPath,
           scenario,
         });
-      } catch (err: any) {
+      } catch (err) {
         if (!resolved) {
           resolved = true;
           cleanup();
           resolve({
             success: false,
-            error: `Failed to spawn canvas: ${err.message}`,
+            error: failedTo("canvas", "spawn canvas", kind, err),
           });
         }
       }
@@ -164,6 +201,15 @@ export async function pickMeetingTime(
   config: MeetingPickerConfig,
   options?: SpawnOptions
 ): Promise<CanvasResult<MeetingPickerResult>> {
+  // Validate config before spawning
+  const validation = validateMeetingPickerConfig(config);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: formatValidationErrors(validation),
+    };
+  }
+
   return spawnCanvasWithIPC<MeetingPickerConfig, MeetingPickerResult>(
     "calendar",
     "meeting-picker",
@@ -190,6 +236,15 @@ export async function displayCalendar(
   },
   options?: SpawnOptions
 ): Promise<CanvasResult<void>> {
+  // Validate config before spawning
+  const validation = validateBaseCalendarConfig(config);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: formatValidationErrors(validation),
+    };
+  }
+
   return spawnCanvasWithIPC("calendar", "display", config, options);
 }
 
@@ -205,6 +260,15 @@ export async function displayDocument(
   config: DocumentConfig,
   options?: SpawnOptions
 ): Promise<CanvasResult<void>> {
+  // Validate config before spawning
+  const validation = validateDocumentConfig(config);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: formatValidationErrors(validation),
+    };
+  }
+
   return spawnCanvasWithIPC("document", "display", config, options);
 }
 
@@ -217,9 +281,47 @@ export async function editDocument(
   config: DocumentConfig,
   options?: SpawnOptions
 ): Promise<CanvasResult<DocumentSelection>> {
+  // Validate config before spawning
+  const validation = validateDocumentConfig(config);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: formatValidationErrors(validation),
+    };
+  }
+
   return spawnCanvasWithIPC<DocumentConfig, DocumentSelection>(
     "document",
     "edit",
+    config,
+    options
+  );
+}
+
+// ============================================
+// Flight Canvas API
+// ============================================
+
+/**
+ * Open flight booking canvas for flight selection and optional seat selection
+ * Returns the selected flight and optional seat
+ */
+export async function bookFlight(
+  config: FlightConfig,
+  options?: SpawnOptions
+): Promise<CanvasResult<FlightResult>> {
+  // Validate config before spawning
+  const validation = validateFlightConfig(config);
+  if (!validation.valid) {
+    return {
+      success: false,
+      error: formatValidationErrors(validation),
+    };
+  }
+
+  return spawnCanvasWithIPC<FlightConfig, FlightResult>(
+    "flight",
+    "booking",
     config,
     options
   );
